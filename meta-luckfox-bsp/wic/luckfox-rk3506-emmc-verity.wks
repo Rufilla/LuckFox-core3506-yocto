@@ -1,0 +1,33 @@
+# Rockchip RK3506 eMMC layout for wic — Phase 4 dm-verity verified-rootfs variant.
+#
+# Extends the 3b-B GPT layout with the verity hash + writable data partitions.
+# Partition NUMBERING is load-bearing (referenced by the signed dm-mod.create=
+# bootargs and /etc/fstab): GPT-entry partitions, in order, become mmcblk0p1..p4:
+#   p1 boot   : raw signed boot.img FIT (boot_fit verifies; DTB carries the
+#               verity root hash in dm-mod.create=)
+#   p2 rootfs : READ-ONLY verity DATA image (the exact ext4 that was hashed;
+#               rawcopied, not expanded)  -> dm-verity data_dev
+#   p3 verity : the verity hash tree (Merkle)            -> dm-verity hash_dev
+#   p4 data   : empty rw ext4, mounted at /data for app persistence
+# idbloader (sector 64) + u-boot.img (8 MiB) are raw/--no-table (table-independent).
+
+bootloader --ptable gpt
+
+part --source rawcopy --sourceparams="file=idbloader.img" --no-table --align 32
+part --source rawcopy --sourceparams="file=u-boot.img" --no-table --align 8192
+
+# p1 boot: raw signed Rockchip boot.img FIT (named "boot" for boot_fit). The
+# verity-roothash variant is rebuilt into IMGDEPLOYDIR by rk3506_verity_bootimg
+# (the image-side step), so reference it there by absolute path (rawcopy joins
+# absolute file= as-is; wic's default rawcopy dir is DEPLOY_DIR_IMAGE).
+part boot --source rawcopy --sourceparams="file=${IMGDEPLOYDIR}/boot-verity.img" --part-name boot --align 16384 --fixed-size 64 --active
+
+# p2 rootfs: the exact verity DATA ext4 image (rawcopy so bytes match the hash).
+# In IMGDEPLOYDIR at wic time. (IMAGE_LINK_NAME already includes ".rootfs".)
+part rootfs --source rawcopy --sourceparams="file=${IMGDEPLOYDIR}/${IMAGE_LINK_NAME}.ext4" --part-name rootfs --align 16384
+
+# p3 verity: the verity hash tree (IMGDEPLOYDIR at wic time).
+part verity --source rawcopy --sourceparams="file=${IMGDEPLOYDIR}/${IMAGE_LINK_NAME}.ext4.verity" --part-name verity --align 16384
+
+# p4 data: empty writable ext4 for persistence (mounted at /data via fstab).
+part data --fstype=ext4 --label data --part-name data --align 16384 --fixed-size 256

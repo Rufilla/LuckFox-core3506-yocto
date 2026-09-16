@@ -1,0 +1,84 @@
+# local.conf.sample for LuckFox Core3506 (RK3506B)
+#
+# Copy this to your build directory as conf/local.conf.
+
+# --- Target machine ---
+MACHINE = "luckfox-core3506"
+
+# --- Distribution ---
+DISTRO = "luckfox"
+
+# --- Accept commercial license for Rockchip proprietary boot blobs ---
+# The RK3506 boot chain requires closed-source DDR init and SPL binaries
+# from Rockchip's rkbin repository. Without these, the board cannot boot.
+LICENSE_FLAGS_ACCEPTED += "commercial"
+
+# --- OP-TEE secure boot (opt-in) ---
+# The from-source OP-TEE port (upstream mainline, pinned in
+# optee-os-rk3506_4.10.0+git.bb) is now the DEFAULT provider. To restore the
+# byte-identical closed vendor OP-TEE blob as a fallback, set:
+#     OPTEE_PROVIDER = "rkbin"
+# Sign the U-Boot FIT (the SPL enforces the signature, un-fused):
+RK3506_TEE_FIT_SIGNATURE = "1"
+# HW secure-RAM isolation (Phase 2): leave "0" until the source-OP-TEE image is
+# proven booting on Core3506 hardware, then flip to "1".
+RK3506_TEE_HW_ISOLATE = "0"
+# Production MUST point this at an offline/HSM RSA-2048 key dir (dev.key +
+# dev.crt). Empty = recipe generates an EPHEMERAL dev key (eval only).
+# RK3506_TEE_FIT_KEY_DIR = "/path/to/offline/keydir"
+
+# --- Build settings ---
+# Adjust parallelism to your build machine
+BB_NUMBER_THREADS ?= "${@oe.utils.cpu_count()}"
+PARALLEL_MAKE ?= "-j ${@oe.utils.cpu_count()}"
+
+# Download and sstate cache directories.
+# Point these somewhere with plenty of space, outside the build tree, so they
+# survive a `rm -rf build/` and can be shared between builds.
+#DL_DIR ?= "${HOME}/yocto-artifacts/downloads"
+#SSTATE_DIR ?= "${HOME}/yocto-artifacts/sstate-cache"
+
+# --- Package management ---
+PACKAGE_CLASSES = "package_ipk"
+
+# --- Init system ---
+# Default: systemd (Core3506 has 512 MB RAM, sufficient for systemd)
+# For low-RAM boards (<=128 MB), override to:
+#   INIT_MANAGER = "sysvinit"
+# or:
+#   INIT_MANAGER = "busybox"
+
+# --- C library ---
+# Default: glibc (Core3506 has 512 MB RAM)
+# For low-RAM boards (<=128 MB), consider:
+#   TCLIBC = "musl"
+
+# --- Development convenience ---
+# Remove for production builds
+EXTRA_IMAGE_FEATURES += "debug-tweaks"
+
+# --- CVE scanning (optional) ---
+# Uncomment to run Yocto's cve-check over the pinned sources. An NVD API key is
+# strongly recommended: without one the NVD 2.0 API rate-limits the cve-update
+# fetch, which can wedge in an infinite "Got 0 entries" loop on a full DB
+# download. Get a free key at https://nvd.nist.gov/developers/request-an-api-key
+# and `export NVDCVE_API_KEY=xxxx` before bitbake (read from the env below).
+#NVDCVE_API_KEY ?= "${@os.environ.get('NVDCVE_API_KEY','')}"
+#INHERIT:append = " cve-check"
+#
+# Rufilla's internal `meta-rufilla-lucerna` layer replaces the line above with
+# `INHERIT:append = " rufilla-lucerna"`, which adds scan-artifact packaging on
+# top of cve-check. That layer is not public; plain cve-check is the equivalent
+# for external builds.
+
+# --- Disk space monitoring ---
+BB_DISKMON_DIRS ??= "\
+    STOPTASKS,${TMPDIR},1G,100K \
+    STOPTASKS,${DL_DIR},1G,100K \
+    STOPTASKS,${SSTATE_DIR},1G,100K \
+    STOPTASKS,/tmp,100M,100K \
+    HALT,${TMPDIR},100M,1K \
+    HALT,${DL_DIR},100M,1K \
+    HALT,${SSTATE_DIR},100M,1K \
+    HALT,/tmp,10M,1K \
+"

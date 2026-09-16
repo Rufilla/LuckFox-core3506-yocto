@@ -1,0 +1,12 @@
+[Unit]
+Description=Seed persistent U-Boot env with A/B OTA defaults (first boot)
+ConditionPathExists=/etc/ota-bootenv
+Before=ota-mark-good.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/ota-env-init
+
+[Install]
+WantedBy=multi-user.target

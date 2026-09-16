@@ -1,0 +1,43 @@
+# Rockchip RK3506 eMMC layout for wic — Phase 3b-B signed-kernel-FIT variant.
+#
+# Differs from luckfox-rk3506-emmc.wks in two ways the signed-boot path REQUIRES
+#
+#
+#   1. GPT partition table (not msdos). U-Boot's boot_fit finds the boot image
+#      via part_get_info_by_name(dev_desc, "boot", ...), which string-matches the
+#      *partition name*. MBR/dos partitions have only generic names (hda1…) and
+#      can never match "boot"; GPT carries the partition name. So the boot
+#      partition is a GPT entry literally named "boot" (--part-name boot, applied
+#      by wic via `sgdisk --change-name`).
+#   2. The boot partition is a RAW signed Rockchip boot.img FIT (rawcopy), NOT a
+#      vfat filesystem with extlinux + zImage. boot_fit blk_dread()s the FIT
+#      directly and verifies its config signature (it reads the kernel DTB from
+#      the FIT /images/resource node and hang()s on a bad signature).
+#
+# idbloader.img (sector 64) and u-boot.img (8 MB) are located by the BootROM/SPL
+# independent of the partition table, so they coexist with the GPT primary header
+# (sectors 1–33) exactly as Rockchip's stock PARTS_RKIMG GPT layout does.
+#
+# Layout:
+#   Sector 0x0040 (32K) : idbloader.img (DDR init + SPL)          [raw, no entry]
+#   Sector 0x4000 (8M)  : u-boot.img (U-Boot + OP-TEE FIT;        [raw, no entry]
+#                         control FDT carries the kernel-FIT pubkey)
+#   GPT "boot"  (16M)   : boot.img (signed kernel+DTB+resource FIT)
+#   GPT "rootfs"        : ext4 rootfs (fills remaining space)
+
+bootloader --ptable gpt
+
+# idbloader.img: DDR init + SPL, raw at sector 64 (table-independent)
+part --source rawcopy --sourceparams="file=idbloader.img" --no-table --align 32
+
+# u-boot.img: U-Boot + OP-TEE FIT, raw at 8 MiB (table-independent)
+part --source rawcopy --sourceparams="file=u-boot.img" --no-table --align 8192
+
+# boot: RAW signed Rockchip boot.img FIT in a GPT partition NAMED "boot"
+# (boot_fit matches this name). 64 MiB is generous for the kernel + DTB.
+# NOTE: wic's parser shlex-splits each physical line — no backslash line
+# continuation, so this directive must stay on one line.
+part boot --source rawcopy --sourceparams="file=boot.img" --part-name boot --align 16384 --fixed-size 64 --active
+
+# rootfs: ext4, fills remaining space
+part / --source rootfs --fstype=ext4 --label rootfs --part-name rootfs --align 24576

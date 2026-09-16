@@ -1,0 +1,17 @@
+# Code owners are requested for review automatically.
+# Syntax: <pattern> <owners...>. The LAST matching pattern wins.
+#
+# Replace @Rufilla/embedded with the real GitHub team or user handles before
+# relying on this — an unresolvable owner silently disables review requests.
+
+*                                   @Rufilla/embedded
+
+/meta-rockchip-rk3506/              @Rufilla/embedded
+/meta-luckfox-bsp/                  @Rufilla/embedded
+/meta-luckfox-distro/               @Rufilla/embedded
+
+# Security-sensitive: boot chain, signing, verity, OTA.
+/meta-rockchip-rk3506/recipes-security/   @Rufilla/embedded
+/meta-luckfox-bsp/classes/dm-verity-img.bbclass  @Rufilla/embedded
+/meta-luckfox-distro/recipes-support/swupdate/   @Rufilla/embedded
+

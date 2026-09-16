@@ -1,0 +1,30 @@
+# bblayers.conf.sample for LuckFox Core3506 (RK3506B)
+#
+# Copy this to your build directory as conf/bblayers.conf and adjust
+# paths to match your Yocto install location.
+#
+# This repo is RK3506-only. RV1106 boards (e.g. LuckFox Pico Ultra W)
+# live in a separate repo: ../luckfox-pico-yocto.
+
+# Adjust TOPDIR to your poky checkout location
+POKY_DIR = "/path/to/poky"
+LUCKFOX_DIR = "/path/to/luckfox-yocto"
+
+BBLAYERS ?= " \
+    ${POKY_DIR}/meta \
+    ${POKY_DIR}/meta-poky \
+    ${LUCKFOX_DIR}/sources/meta-openembedded/meta-oe \
+    ${LUCKFOX_DIR}/sources/meta-swupdate \
+    ${LUCKFOX_DIR}/meta-rockchip-rk3506 \
+    ${LUCKFOX_DIR}/meta-luckfox-bsp \
+    ${LUCKFOX_DIR}/meta-luckfox-distro \
+"
+
+# Optional: Rufilla's internal `meta-rufilla-lucerna` scan layer adds cve-check
+# and create-spdx wiring. It is not public and is not needed to build any image
+# in this repository. If you have access, clone it under
+# ${LUCKFOX_DIR}/sources/ and add it to BBLAYERS above; the kernel and U-Boot
+# recipes pick it up automatically via BBFILES_DYNAMIC.
+
+# meta-oe provides libconfig (swupdate dep); meta-swupdate provides the SWUpdate
+# daemon + .swu image class for OTA (LUCKFOX_OTA). See OTA_SWUPDATE_PLAN.md.

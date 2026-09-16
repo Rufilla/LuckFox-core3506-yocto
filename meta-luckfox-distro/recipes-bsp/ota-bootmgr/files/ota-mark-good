@@ -1,0 +1,40 @@
+#!/bin/sh
+# ota-mark-good — commit the running A/B slot as healthy (OTA M1).
+# See OTA_SWUPDATE_PLAN.md.
+#
+# Runs late in boot (after multi-user.target). Reaching this point is the M1
+# health definition; harden the check later (Task 6 — e.g. key services up,
+# network reachable). On success it resets the running slot's try-counter to the
+# max and makes that slot preferred, so the boot.scr selector keeps choosing it.
+# If the new slot had instead hung before reaching here, its counter (already
+# decremented by boot.scr) would eventually hit 0 and U-Boot would roll back to
+# the other slot.
+set -e
+
+MAX_TRIES=3
+
+slot=""
+case "$(cat /proc/cmdline)" in
+    *rootfs_a*) slot=A ;;
+    *rootfs_b*) slot=B ;;
+esac
+
+if [ -z "$slot" ]; then
+    # Fall back to the mounted root's filesystem label (wic also sets it).
+    rootlabel=$(findmnt -no LABEL / 2>/dev/null || true)
+    case "$rootlabel" in
+        rootfs_a) slot=A ;;
+        rootfs_b) slot=B ;;
+    esac
+fi
+
+if [ -z "$slot" ]; then
+    echo "ota-mark-good: cannot determine running slot — leaving env untouched"
+    exit 0
+fi
+
+if [ "$slot" = "A" ]; then other=B; else other=A; fi
+
+echo "ota-mark-good: running slot=$slot — committing (BOOT_${slot}_LEFT=$MAX_TRIES, BOOT_ORDER='$slot $other')"
+fw_setenv BOOT_${slot}_LEFT "$MAX_TRIES"
+fw_setenv BOOT_ORDER "$slot $other"

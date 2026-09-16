@@ -1,0 +1,84 @@
+Subject: [PATCH] rk3506 R1: relocate atags + NS boot map for HW-isolated TEE
+#
+# Applied only when RK3506_TEE_HW_ISOLATE=1. With CFG_RK3506_TEE_HW_ISOLATE
+# the FW_DDR firewall protects [0,16M); this moves every NS boot structure
+# above 16M and migrates the SPL atags to 28M so U-Boot proper can read them
+# post-protection. Regenerated 2026-05-23 against the clean 0001-0003 tree.
+#
+--- a/arch/arm/mach-rockchip/spl.c
++++ b/arch/arm/mach-rockchip/spl.c
+@@ -615,6 +615,13 @@
+   #ifdef BUILD_SPL_TAG
+ 	atags_set_shared_fwver(FW_SPL, "spl-"BUILD_SPL_TAG);
+   #endif
++	/* R1 HW-isolate: migrate the fully-assembled atags from the SPL base
++	 * 0x62000 to 0x01c00000 (28M) — outside OP-TEE's firewall-protected
++	 * [0,16M) region. The image is loaded here (OP-TEE @0x1000) but not
++	 * yet running, so 0x62000 still holds the complete atags; once OP-TEE
++	 * runs, [0,16M) is firewall-denied to NS, but this 0x01c00000 copy
++	 * survives and stays NS-accessible for U-Boot proper (ATAGS_OFFSET). */
++	memcpy((void *)0x01c00000, (void *)0x00062000, ATAGS_SIZE);
+ #endif
+ #if defined(CONFIG_SPL_KERNEL_BOOT)
+ 	if (spl_image->next_stage == SPL_NEXT_STAGE_KERNEL)
+--- a/include/configs/rk3506_common.h
++++ b/include/configs/rk3506_common.h
+@@ -15,20 +15,17 @@
+ #define CONFIG_SYS_MALLOC_LEN		(16 << 20)
+ #define CONFIG_SYS_CBSIZE		1024
+ /*
+- * M2 (2026-05-15): 0x00200000 -> 0x00400000. Upstream OP-TEE's
+- * secure TEE_RAM is a fixed 2 MB CORE_MMU_PGDIR granule
+- * [0x1000,0x201000); U-Boot linked at 0x200000 put its
+- * pre-relocation vector base / link-addr refs inside OP-TEE's
+- * live secure RAM, wedging NS on the first exception
+- * (SWD-confirmed, JOURNAL 2026-05-15 19:00/19:25). 0x400000 is
+- * clear of TEE_RAM, the FDT (~0x2a61c8) and INIT_SP (0x600000);
+- * matches the FIT `uboot` load + OP-TEE CFG_NS_ENTRY_ADDR (both
+- * 0x400000) so link==load==entry. Build-tree edit for the
+- * bring-up flash loop; proper Yocto recipe patch = M6 item.
++ * R1 HW-isolate (this patch is applied only when
++ * RK3506_TEE_HW_ISOLATE=1): with CFG_RK3506_TEE_HW_ISOLATE the FW_DDR
++ * firewall protects the low [0,16M) region (OP-TEE TEE_RAM + TA pool)
++ * from the non-secure Cortex-A7. Every NS boot structure must therefore
++ * live above 16M. U-Boot proper relocates to 17M, INIT_SP to 24M,
++ * LOAD_ADDR to 31M (the non-isolate build keeps the M2/M3 0x00400000
++ * map). HW-validated: §7.1 5895/5895, NS reads of [0,16M) abort.
+  */
+-#define CONFIG_SYS_TEXT_BASE		0x00400000
+-#define CONFIG_SYS_INIT_SP_ADDR		0x00600000
+-#define CONFIG_SYS_LOAD_ADDR		0x00008000
++#define CONFIG_SYS_TEXT_BASE		0x01100000
++#define CONFIG_SYS_INIT_SP_ADDR		0x01800000
++#define CONFIG_SYS_LOAD_ADDR		0x01f00000
+ #define CONFIG_SYS_BOOTM_LEN		(64 << 20)	/* 64M */
+ #define CONFIG_SYS_SDRAM_BASE		0
+ #define SDRAM_MAX_SIZE			0xc0000000
+@@ -45,7 +42,16 @@
+ #define GICD_BASE			0xff581000
+ #define GICC_BASE			0xff582000
+ 
++/* R1 HW-isolate: U-Boot proper reads atags AFTER OP-TEE firewall-protects
++ * the low [0,16M) region. The SPL keeps its atags at 0x62000 (the TPL DDR
++ * blob + SPL write them there, all pre-protection); spl_perform_fixups()
++ * then migrates the assembled atags to 0x01c00000 (28M, above [0,16M)) so
++ * U-Boot proper can read them post-protection. */
++#ifdef CONFIG_SPL_BUILD
+ #define ATAGS_OFFSET			0x62000
++#else
++#define ATAGS_OFFSET			0x01c00000
++#endif
+ #define ATAGS_SIZE			0x01000
+ 
+ /* secure otp */
+@@ -96,8 +102,8 @@
+  * ramdisk: 224M
+  */
+ #define ENV_MEM_LAYOUT_SETTINGS \
+-	"scriptaddr=0x00b00000\0"	\
+-	"pxefile_addr_r=0x00c00000\0"	\
++	"scriptaddr=0x01d00000\0"	\
++	"pxefile_addr_r=0x01e00000\0"	\
+ 	"fdt_addr_r=0x0d000000\0"	\
+ 	"kernel_addr_r=0x08000000\0"	\
+ 	"kernel_addr_c=0x08000000\0"	\

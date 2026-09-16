@@ -1,0 +1,222 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * Common hardware description for the LuckFox Core3506 SoM on the
+ * foxbridge carrier. Two .dts files include this:
+ *
+ *   rk3506b-luckfox-core3506.dts      — base (no display)
+ *   rk3506b-luckfox-core3506-dsi.dts  — base + 7" DSI screen + FT5x06 touch
+ *
+ * Core3506-0808: RK3506B SoC, 512 MB DDR3L, 8 GB eMMC (on-module)
+ * Foxbridge carrier: Ethernet (CH182H2), USB host (OTG1), debug UART,
+ *                    SYS LED (D1, GPIO1_A0), USER LED (D5, GPIO1_A6)
+ */
+
+#include "rk3506.dtsi"
+#include <dt-bindings/suspend/rockchip-rk3506.h>
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/leds/common.h>
+#include <dt-bindings/clock/rockchip,rk3506-cru.h>
+
+/ {
+	model = "LuckFox Core3506";
+	compatible = "luckfox,core3506", "rockchip,rk3506";
+
+	chosen {
+		/*
+		 * NO root= here on purpose. Rockchip U-Boot's
+		 * board_fdt_chosen_bootargs() APPENDS this /chosen/bootargs
+		 * AFTER the bootloader's cmdline, and the kernel takes the
+		 * last root=. A hardcoded root= would override whatever
+		 * extlinux/boot.scr selects and make A/B impossible (it pinned
+		 * root=/dev/mmcblk0p2 — which only worked because the old
+		 * single-slot rootfs happened to be p2). The bootloader owns
+		 * root now: extlinux.conf (single-slot) or the A/B boot.scr
+		 * (root=PARTLABEL=rootfs_a|_b). See OTA_SWUPDATE_PLAN.md.
+		 * console=ttyS0 (plain 8250 on UART0): from-source OP-TEE shares
+		 * UART0, so the chain is UART0/ttyS0 (no ttyFIQ0 fiq-debugger).
+		 * earlycon/console kept as an always-present early console.
+		 */
+		bootargs = "earlycon=uart8250,mmio32,0xff0a0000,115200n8 console=ttyS0,115200";
+	};
+
+	/* PSCI enabled — OP-TEE provides the secure monitor for SMC calls */
+
+	leds {
+		compatible = "gpio-leds";
+
+		sys_led: led-sys {
+			gpios = <&gpio1 RK_PA0 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "heartbeat";
+			label = "sys";
+		};
+
+		user_led: led-user {
+			gpios = <&gpio1 RK_PA6 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "none";
+			label = "user";
+		};
+	};
+
+	vcc5v0_otg1: vcc5v0-otg1-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc5v0_otg1";
+		regulator-boot-on;
+		regulator-always-on;
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+	};
+
+	/*
+	 * Console = UART0 (0xff0a0000), ttyS0 (serial0), on the GPIO0_C6/C7
+	 * console pads via uart0_xfer_pins (standard IOMUX func 1 — the vendor-
+	 * original pad function, NOT the RMIO crossbar). Plain 8250, no Rockchip
+	 * fiq-debugger/ttyFIQ0. This matches the optee_os W14 UART0 default and
+	 * U-Boot's native UART0 console — one consistent UART0 chain for the
+	 * upstreaming process. (Was UART1/ttyS1 via RMIO; migrated 2026-06-01.)
+	 */
+
+	/* Power supply chain */
+	vcc_sys: vcc-sys {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc_sys";
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+	};
+
+	vcc3v3_stb: vcc3v3-stb {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc3v3_stb";
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		vin-supply = <&vcc_sys>;
+	};
+
+	vcc_1v8: vcc-1v8 {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc_1v8";
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		vin-supply = <&vcc3v3_stb>;
+	};
+
+	vcc_ddr: vcc-ddr {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc_ddr";
+		regulator-always-on;
+		regulator-boot-on;
+		vin-supply = <&vcc_sys>;
+	};
+
+	vdd_arm: vdd-arm {
+		compatible = "pwm-regulator";
+		pwms = <&pwm0_4ch_0 0 5000 1>;
+		regulator-name = "vdd_arm";
+		regulator-min-microvolt = <710000>;
+		regulator-max-microvolt = <1207000>;
+		regulator-init-microvolt = <1011000>;
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-settling-time-up-us = <250>;
+		pwm-supply = <&vcc_sys>;
+	};
+};
+
+&cpu0 {
+	cpu-supply = <&vdd_arm>;
+};
+
+/*
+ * MMC controller — single controller (mmc@ff480000).
+ * On Core3506-0808, eMMC is on-module and permanently occupies this bus.
+ * SD card slot on carrier is non-functional (shared bus, silicon limitation).
+ * broken-cd: no card-detect GPIO, assume card always present.
+ */
+&mmc {
+	bus-width = <4>;
+	broken-cd;
+	no-sdio;
+	cap-sd-highspeed;
+	cap-mmc-highspeed;
+	vmmc-supply = <&vcc3v3_stb>;
+	vqmmc-supply = <&vcc3v3_stb>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&sdmmc_clk_pins &sdmmc_cmd_pins &sdmmc_bus4_pins>;
+	status = "okay";
+};
+
+&pwm0_4ch_0 {
+	pinctrl-names = "active";
+	pinctrl-0 = <&rm_io21_pwm0_ch0>;
+	status = "okay";
+};
+
+/* Ethernet — CH182H2 PHY, RMII mode, MAC-driven 50MHz clock
+ * SOM outputs 25MHz on ETH_CLK0_25M_OUT → PHY XTALIN (no crystal)
+ */
+&gmac0 {
+	phy-mode = "rmii";
+	clock_in_out = "output";
+
+	clocks = <&cru CLK_MAC0>, <&cru CLK_MAC0_PTP>,
+		 <&cru PCLK_MAC0>, <&cru ACLK_MAC0>,
+		 <&cru CLK_MAC_OUT>;
+	clock-names = "stmmaceth", "ptp_ref",
+		      "pclk_mac", "aclk_mac",
+		      "clk_mac_refout";
+
+	assigned-clocks = <&cru CLK_MAC_OUT>;
+	assigned-clock-rates = <25000000>;
+
+	snps,reset-active-low;
+	snps,reset-delays-us = <0 20000 100000>;
+
+	pinctrl-names = "default";
+	pinctrl-0 = <&eth_rmii0_miim_pins
+		     &eth_rmii0_tx_bus2_pins
+		     &eth_rmii0_rx_bus2_pins
+		     &eth_rmii0_clk_pins
+		     &eth_clk0_25m_out_pins>;
+
+	phy-handle = <&rmii_phy0>;
+	status = "okay";
+};
+
+&mdio0 {
+	rmii_phy0: phy@1 {
+		compatible = "ethernet-phy-ieee802.3-c22";
+		reg = <0x1>;
+	};
+};
+
+/* USB PHY — must enable parent node for child ports to work */
+&usb2phy {
+	status = "okay";
+};
+
+/* USB1 — host port (H6 USB-C, TPS2553 VBUS switch) */
+&usb20_otg1 {
+	dr_mode = "host";
+	status = "okay";
+};
+
+&u2phy_otg1 {
+	phy-supply = <&vcc5v0_otg1>;
+	status = "okay";
+};
+
+/* core3506 NS console: UART0 on the GPIO0_C6 (TX) / GPIO0_C7 (RX) pads via
+ * uart0_xfer_pins (standard func 1 — the vendor-original pad function). Same
+ * physical pins, upstream-clean. Matches the OP-TEE (W14) + native U-Boot UART0
+ * console path. The GPIO0_C IOMUX is NS-accessible (OP-TEE SGRF opens it), so
+ * the kernel applies this pinctrl in the normal world. */
+&uart0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart0_xfer_pins>;
+	status = "okay";
+};

@@ -1,0 +1,119 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Owen O'Hehir <40183643+OOHehir@users.noreply.github.com>
+Date: Sat, 16 May 2026 17:30:00 +0000
+Subject: [PATCH] rk3506: recipe-track M2/M3 rk3506_common.h memory-map edits
+
+This makes durable two previously build-tree-ONLY edits to
+include/configs/rk3506_common.h that were never recipe-tracked (a
+clean `bitbake -c clean`/`-c cleansstate` would have silently
+regressed M2). Both are folded here so SRC_URI is the single
+source of truth.
+
+(NOTE: the RKIMG_BOOTCOMMAND `run distro_bootcmd;` reorder is
+already carried by 0001-rk3506-add-distro-boot-fallback.patch and
+is deliberately NOT duplicated here.)
+
+1. M2 (2026-05-15) CONFIG_SYS_TEXT_BASE 0x00200000 -> 0x00400000.
+   U-Boot linked at 0x200000 placed its pre-relocation vector /
+   link-addr refs inside OP-TEE's live secure TEE_RAM
+   [0x00001000,0x00201000), wedging the non-secure world on the
+   first exception (SWD-confirmed). 0x400000 is clear of TEE_RAM,
+   the FDT and INIT_SP, and matches the FIT `uboot` load +
+   OP-TEE CFG_NS_ENTRY_ADDR so link==load==entry. This is the
+   load-bearing M2-PASS fix; its own in-tree comment had flagged
+   "proper Yocto recipe patch = M6 item" -- done here at M3.
+
+2. M3 (2026-05-16) ENV_MEM_LAYOUT relocation. Vendor U-Boot
+   2017.09 jumps to the raw zImage at kernel_addr_c; it does not
+   decompress. The ARM kernel CONFIG_AUTO_ZRELADDR self-
+   decompressor then targets (PC & 0xf8000000) + 0x8000. With the
+   stock kernel_addr_c=0x01100000 (< 0x08000000) that resolved to
+   0x00008000, straight through the OP-TEE secure window which the
+   M2 DDR-firewall + SGRF fix makes non-secure-INACCESSIBLE -- so
+   the NS decompressor external-aborted and cpu0 tight-looped at
+   PA ~0x7bcd42 with no console (M3 hang, optee-rk3506 JOURNAL
+   2026-05-15 19:30 / 2026-05-16 17:05). kernel_addr_c/_r raised
+   to 0x08000000 so AUTO_ZRELADDR resolves to 0x08008000 -- clear
+   of the secure window and below the SHMEM 0x10000000 mask
+   boundary. fdt_addr_r (was 0x00063000, inside the secure window)
+   and ramdisk_addr_r moved above the decompress + self-relocation
+   scratch, both kept < 0x10000000. Kernel-side counterparts
+   (reserved-memory growth, ramoops move, maxcpus=1) are in the
+   Lyra Ultra board DTS.
+
+Signed-off-by: Owen O'Hehir <40183643+OOHehir@users.noreply.github.com>
+---
+diff --git a/include/configs/rk3506_common.h b/include/configs/rk3506_common.h
+index db22b34b12..1b84fbab4d 100644
+--- a/include/configs/rk3506_common.h
++++ b/include/configs/rk3506_common.h
+@@ -14,7 +14,19 @@
+ #define COUNTER_FREQUENCY		24000000
+ #define CONFIG_SYS_MALLOC_LEN		(16 << 20)
+ #define CONFIG_SYS_CBSIZE		1024
+-#define CONFIG_SYS_TEXT_BASE		0x00200000
++/*
++ * M2 (2026-05-15): 0x00200000 -> 0x00400000. Upstream OP-TEE's
++ * secure TEE_RAM is a fixed 2 MB CORE_MMU_PGDIR granule
++ * [0x1000,0x201000); U-Boot linked at 0x200000 put its
++ * pre-relocation vector base / link-addr refs inside OP-TEE's
++ * live secure RAM, wedging NS on the first exception
++ * (SWD-confirmed, JOURNAL 2026-05-15 19:00/19:25). 0x400000 is
++ * clear of TEE_RAM, the FDT (~0x2a61c8) and INIT_SP (0x600000);
++ * matches the FIT `uboot` load + OP-TEE CFG_NS_ENTRY_ADDR (both
++ * 0x400000) so link==load==entry. Build-tree edit for the
++ * bring-up flash loop; proper Yocto recipe patch = M6 item.
++ */
++#define CONFIG_SYS_TEXT_BASE		0x00400000
+ #define CONFIG_SYS_INIT_SP_ADDR		0x00600000
+ #define CONFIG_SYS_LOAD_ADDR		0x00008000
+ #define CONFIG_SYS_BOOTM_LEN		(64 << 20)	/* 64M */
+@@ -58,18 +70,38 @@
+ #define CONFIG_PREBOOT
+ 
+ /*
+- *     fdt:  396K - 524K
+- *   Image:  1M+32k - 16M
+- *  zImage:  16M - 24M
+- * ramdisk:  24M - ...
++ * M3 (2026-05-16): relocated clear of OP-TEE secure TEE_RAM.
++ * OP-TEE's secure window is [0x00001000,0x00201000); the M2
++ * DDR-firewall + SGRF fix makes it NS-INACCESSIBLE (aborts on any
++ * NS touch). Vendor U-Boot 2017.09 does NOT decompress the kernel
++ * — it jumps to the raw zImage at kernel_addr_c. The ARM kernel
++ * self-decompressor (CONFIG_AUTO_ZRELADDR) then lands the image at
++ * (PC & 0xf8000000) + 0x8000. With kernel_addr_c < 0x08000000 that
++ * resolved to 0x00008000 — straight through the secure window — so
++ * the NS decompressor aborted (cpu0 tight-loop @ 0x7bcd42, JOURNAL
++ * 2026-05-15 19:30 / 2026-05-16 17:05). Raising kernel_addr_c/_r to
++ * 0x08000000 makes AUTO_ZRELADDR resolve to 0x08008000 — clear of
++ * the secure window AND of SHMEM [0x10000000,0x10080000) (the next
++ * 128 MB mask boundary, 0x10000000, is deliberately NOT crossed).
++ * fdt/ramdisk moved above the decompress + self-reloc scratch and
++ * kept < 0x10000000. Memory < 0x08000000 (incl. OP-TEE) falls
++ * below the kernel's detected PHYS_OFFSET and is harmlessly
++ * ignored. Reserved-memory / ramoops / maxcpus counterparts live
++ * in meta-rockchip-rk3506/recipes-kernel/linux/files/
++ * rk3506b-luckfox-lyra-ultra.dts. RAM-waste optimisation (relocate
++ * OP-TEE high so the kernel can use 0x8000 again) is an M4+/M6 item.
++ *     fdt:  208M
++ *   Image:  128M+32k - ~176M
++ *  zImage:  128M (entry; self-relocates)
++ * ramdisk: 224M
+  */
+ #define ENV_MEM_LAYOUT_SETTINGS \
+ 	"scriptaddr=0x00b00000\0"	\
+ 	"pxefile_addr_r=0x00c00000\0"	\
+-	"fdt_addr_r=0x00063000\0"	\
+-	"kernel_addr_r=0x00108000\0"	\
+-	"kernel_addr_c=0x01100000\0"	\
+-	"ramdisk_addr_r=0x01800000\0"
++	"fdt_addr_r=0x0d000000\0"	\
++	"kernel_addr_r=0x08000000\0"	\
++	"kernel_addr_c=0x08000000\0"	\
++	"ramdisk_addr_r=0x0e000000\0"
+ 
+ #include <config_distro_bootcmd.h>
+ 
+--
+2.42.0

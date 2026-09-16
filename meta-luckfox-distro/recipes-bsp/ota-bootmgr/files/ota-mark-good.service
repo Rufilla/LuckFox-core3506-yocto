@@ -1,0 +1,12 @@
+[Unit]
+Description=Commit the running A/B slot as healthy (OTA mark-good)
+After=multi-user.target
+ConditionPathExists=/etc/fw_env.config
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/ota-mark-good
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,44 @@
+# Pre-commit hooks for the LuckFox Core3506 (RK3506) Yocto layers.
+#
+# Run on every commit:
+#   - oelint-adv: static analyser for OpenEmbedded recipes (.bb/.bbappend/.inc/.bbclass).
+#
+# Run manually (heavy / needs a configured bitbake env):
+#   pre-commit run --hook-stage manual yocto-check-layer
+#
+# Local install (one-time):
+#   pip3 install --user --break-system-packages pre-commit
+#   pre-commit install
+#
+# Refresh hook revs:
+#   pre-commit autoupdate
+
+repos:
+  - repo: https://github.com/priv-kweihmann/oelint-adv
+    rev: 9.7.1
+    hooks:
+      - id: oelint-adv
+        # Default file types are .bb/.bbappend/.bbclass/.inc — exactly what we want.
+        # Add .conf if we ever need to lint machine/distro confs (oelint-adv's
+        # conf support is partial, so leaving it off by default).
+        args:
+          - --release=scarthgap   # match the Yocto release this BSP targets
+          - --hide=info           # info-level is too noisy at the start; revisit once errors are clean
+          - --quiet               # findings only, no summary
+          - --relpaths            # relative paths read better in commit output
+          - --rulefile=.oelint.cfg
+        # `.oelint.cfg` documents (with `_why_*` keys) which rules are
+        # suppressed and the rationale. Edit it to retighten — flip an
+        # `"inactive"` to `"error"` or `"warning"`.
+
+  - repo: local
+    hooks:
+      - id: yocto-check-layer
+        name: yocto-check-layer (manual; needs bitbake env)
+        entry: scripts/run-yocto-check-layer.sh
+        language: script
+        pass_filenames: false
+        stages: [manual]
+        # yocto-check-layer needs poky cloned + a build dir initialised.
+        # It's slow (minutes), so we keep it manual-stage. Run with:
+        #   pre-commit run --hook-stage manual yocto-check-layer

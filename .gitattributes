@@ -1,0 +1,13 @@
+# Vendored Go dependencies for foxbridge-mcp. Excluded from GitHub's language
+# statistics and collapsed in diffs — without this the 300+ vendored files make
+# the repository look like a Go project rather than a Yocto BSP.
+meta-luckfox-distro/recipes-support/foxbridge-mcp/files/src/vendor/** linguist-vendored
+
+# Boot blobs and release artifacts are binary; never try to diff or merge them.
+*.bin binary
+*.img binary
+*.wic binary
+
+# Keep shell and Python scripts LF regardless of host platform.
+*.sh text eol=lf
+*.py text eol=lf

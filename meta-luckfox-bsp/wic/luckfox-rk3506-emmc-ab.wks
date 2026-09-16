@@ -1,0 +1,39 @@
+# Rockchip RK3506 eMMC A/B OTA partition layout (GPT) — milestone M1.
+# See OTA_SWUPDATE_PLAN.md. Built when LUCKFOX_OTA="1".
+#
+# Raw regions (BootROM / U-Boot, FIXED offsets, NOT in the GPT table, NOT OTA-able):
+#   sector 64 (32 KiB) : idbloader.img (DDR init + SPL)        — rawcopy, no-table
+#   8 MiB              : u-boot.img (U-Boot + OP-TEE FIT)      — rawcopy, no-table
+#   12 MiB (0xC00000)  : U-Boot env, 32 KiB                    — written by U-Boot /
+#                        fw_setenv at runtime; lives in the 8-16 MiB loader gap,
+#                        deliberately has NO partition entry.
+#
+# GPT partitions (first usable partition starts at 16 MiB):
+#   p1 boot_a    64 MiB  FAT32  zImage+DTB+extlinux.conf (slot A)  [populated]
+#   p2 boot_b    64 MiB  (none) slot B boot — formatted+written by OTA  [reserved]
+#   p3 rootfs_a 512 MiB  ext4   slot A rootfs                          [populated]
+#   p4 rootfs_b 512 MiB  (none) slot B rootfs — written by OTA          [reserved]
+#   p5 recovery 256 MiB  (none) reserved for M3                        [reserved]
+#   p6 data     512 MiB  ext4   persistent /data + OTA staging         [empty fs]
+#
+# First flash populates slot A only; slot B (boot_b/rootfs_b) is written by the
+# first OTA. The "none" partitions reserve their GPT slot + space without a
+# filesystem (kept sparse in the .wic); OTA / a future first-boot step formats
+# them. NOTE: /data is a fixed 512 MiB here; growing it to fill the remaining
+# eMMC on first boot is a tracked follow-up (see OTA_SWUPDATE_PLAN.md).
+#
+# Migration caveat: this layout differs from the single-slot luckfox-rk3506-emmc.wks
+# — moving a fielded unit onto A/B requires one full maskrom reflash; OTA only
+# after that.
+
+bootloader --ptable gpt --configfile=extlinux-slot-a.conf
+
+part --source rawcopy --sourceparams="file=idbloader.img" --no-table --align 32
+part --source rawcopy --sourceparams="file=u-boot.img" --no-table --align 8192
+
+part --source bootimg-partition --sourceparams="loader=u-boot" --fstype=vfat --label boot_a --part-name boot_a --align 16384 --fixed-size 64M --active
+part --fstype=none --part-name boot_b --fixed-size 64M
+part --source rootfs --fstype=ext4 --label rootfs_a --part-name rootfs_a --fixed-size 512M
+part --fstype=none --part-name rootfs_b --fixed-size 512M
+part --fstype=none --part-name recovery --fixed-size 256M
+part --fstype=ext4 --label data --part-name data --fixed-size 512M

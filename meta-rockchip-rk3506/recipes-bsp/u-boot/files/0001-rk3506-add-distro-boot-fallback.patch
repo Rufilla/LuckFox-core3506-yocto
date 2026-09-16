@@ -1,0 +1,39 @@
+From: LuckFox Yocto BSP <noreply@luckfox.com>
+Subject: [PATCH] rk3506: prioritize distro boot over boot_fit
+
+The default RKIMG_BOOTCOMMAND for RK3506 only tries boot_fit and
+boot_android, with no fallback to distro_bootcmd. This prevents
+booting standard Linux distributions that use extlinux.conf or
+boot.scr on a FAT/ext4 boot partition.
+
+Reorder the boot sequence to try distro_bootcmd FIRST, before
+boot_fit. The vendor boot_fit command may hang if it encounters
+unexpected data on eMMC, preventing fallback to distro boot.
+By trying distro boot first, we ensure extlinux.conf-based boot
+works reliably while still falling back to boot_fit/boot_android
+for vendor firmware compatibility.
+
+Signed-off-by: LuckFox Yocto BSP <noreply@luckfox.com>
+---
+ include/configs/rk3506_common.h | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+--- a/include/configs/rk3506_common.h
++++ b/include/configs/rk3506_common.h
+@@ -116,11 +116,13 @@
+ #undef RKIMG_BOOTCOMMAND
+ #ifdef CONFIG_FIT_SIGNATURE
+ #define RKIMG_BOOTCOMMAND		\
+-	"boot_fit;"
++	"run distro_bootcmd;"		\
++	"boot_fit;"
+ #else
+ #define RKIMG_BOOTCOMMAND		\
+-	"boot_fit;"			\
+-	"boot_android ${devtype} ${devnum};"
++	"run distro_bootcmd;"		\
++	"boot_fit;"			\
++	"boot_android ${devtype} ${devnum};"
+ #endif
+
+ #endif

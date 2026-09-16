@@ -1,0 +1,15 @@
+[Unit]
+Description=Foxbridge WiFi bringup (wpa_supplicant WEXT + udhcpc)
+After=network-pre.target systemd-udev-settle.service
+Wants=network-pre.target
+Before=network.target
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/foxbridge-wifi-up
+ExecStop=/bin/sh -c 'killall wpa_supplicant udhcpc 2>/dev/null || true'
+
+[Install]
+WantedBy=multi-user.target

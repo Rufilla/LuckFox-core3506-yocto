@@ -1,0 +1,19 @@
+# A/B OTA env overrides — applied on top of U-Boot's default env by ota-env-init
+# (fw_setenv -s). key=value syntax; '#' lines are comments. See OTA_SWUPDATE_PLAN.md.
+#
+# The A/B slot selector lives in the env var `ab_select` and bootcmd runs it.
+# (We deliberately do NOT use a boot.scr file: this vendor U-Boot 2017.09's
+# `source` mishandles the mkimage -T script container — "Unknown command 'I'".
+# An env script run via `run` is exactly how distro_bootcmd works and is robust.)
+#
+# ab_select iterates BOOT_ORDER; for each slot with attempts left it decrements
+# that slot's counter (setexpr), saveenv's, then sysboots that slot's boot
+# partition extlinux.conf (which pins root=PARTLABEL=rootfs_a|_b). A slot that
+# boots but hangs before ota-mark-good still burns an attempt and is eventually
+# abandoned for the other slot. If no slot is bootable it falls back to
+# distro_bootcmd. Slot A = mmc 0:1 (boot_a)/rootfs_a; slot B = mmc 0:2 (boot_b)/rootfs_b.
+ab_select=for slot in ${BOOT_ORDER}; do if test "${slot}" = A; then setenv ab_part 1; setenv ab_left "${BOOT_A_LEFT}"; else setenv ab_part 2; setenv ab_left "${BOOT_B_LEFT}"; fi; if test -z "${ab_left}"; then setenv ab_left 3; fi; if test "${ab_left}" -gt 0; then setexpr ab_left ${ab_left} - 1; if test "${slot}" = A; then setenv BOOT_A_LEFT ${ab_left}; else setenv BOOT_B_LEFT ${ab_left}; fi; saveenv; echo "A/B: try slot ${slot} (mmc 0:${ab_part}) left ${ab_left}"; sysboot mmc 0:${ab_part} any ${scriptaddr} /extlinux/extlinux.conf; echo "A/B: slot ${slot} did not boot"; else echo "A/B: slot ${slot} exhausted"; fi; done; echo "A/B: no bootable slot, distro fallback"; run distro_bootcmd
+bootcmd=run ab_select
+BOOT_ORDER=A B
+BOOT_A_LEFT=3
+BOOT_B_LEFT=3

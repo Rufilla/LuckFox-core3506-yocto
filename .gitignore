@@ -1,0 +1,28 @@
+# Yocto build output
+build/
+# Downloaded sources (cloned by setup-layers)
+sources/
+# Yocto sstate cache and downloads
+sstate-cache/
+downloads/
+# Release artifacts:
+#   - release/<version>/RELEASE_NOTES.md, SHA256SUMS, and the small SPL
+#     loader binary ARE committed (needed alongside the source tree).
+#   - The ~300 MB WIC image is NOT committed; GitHub rejects files above
+#     100 MB. Attach it to the GitHub release as an asset and link it from
+#     RELEASE_NOTES.md.
+release/**/*.wic
+# Local per-user editor/agent tool state (scheduled-task lock, permission settings).
+.claude/
+
+# Dev FIT signing keys (private key — must never be committed; production uses HSM)
+keys/
+# Luckfox Lyra SDK tarball (~3 GB; reference source for the goodix/backlight backports, not tracked)
+Luckfox_Lyra_SDK_250815.tar.gz
+# Session build logs + serial captures (diagnostic, not source)
+build-*.log
+flash-console*.log
+flash-run.out
+build-pty.log
+# Build-dir scratch sometimes left in the tree root
+data2sign.bin

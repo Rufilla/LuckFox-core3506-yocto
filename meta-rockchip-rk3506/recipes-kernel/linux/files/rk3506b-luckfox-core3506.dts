@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * Base device tree for LuckFox Core3506 SoM + foxbridge carrier — no
+ * display. The 7" DSI screen variant lives in
+ * rk3506b-luckfox-core3506-dsi.dts and is selected by setting
+ *   MACHINE_FEATURES:append = " screen"
+ * in the build.
+ */
+
+/dts-v1/;
+
+#include "rk3506b-luckfox-core3506.dtsi"

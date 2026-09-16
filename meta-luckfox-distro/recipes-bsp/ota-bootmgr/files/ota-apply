@@ -1,0 +1,26 @@
+#!/bin/sh
+# ota-apply <update.swu> — apply an A/B OTA update to the INACTIVE slot.
+# See OTA_SWUPDATE_PLAN.md. Reads the running slot from the kernel cmdline and
+# tells SWUpdate to write the other slot (the .swu carries both stable,slot_a
+# and stable,slot_b selections). On success the inactive slot holds the new
+# rootfs+boot and the U-Boot env points BOOT_ORDER at it; reboot to switch.
+# The ab_select counter then gives it MAX_TRIES attempts, and ota-mark-good
+# commits it once it boots healthy (else U-Boot rolls back to the old slot).
+set -e
+
+SWU="$1"
+if [ -z "$SWU" ] || [ ! -f "$SWU" ]; then
+    echo "usage: ota-apply <file.swu>"
+    exit 1
+fi
+
+case "$(cat /proc/cmdline)" in
+    *rootfs_a*) target="stable,slot_b"; running="A" ;;
+    *rootfs_b*) target="stable,slot_a"; running="B" ;;
+    *) echo "ota-apply: cannot determine running slot from /proc/cmdline"; exit 1 ;;
+esac
+
+echo "ota-apply: running slot $running -> writing inactive slot ($target)"
+swupdate -v -i "$SWU" -e "$target"
+echo "ota-apply: success. Reboot to boot the new slot; ota-mark-good will commit it"
+echo "ota-apply: (if it fails to boot healthy, U-Boot rolls back automatically)."

@@ -1,0 +1,72 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * OP-TEE source-build overlay for Core3506
+ * (no-isolate variant).
+ *
+ * Included into the base DTSI by the kernel recipe ONLY when
+ * OPTEE_PROVIDER = "optee-os-rk3506". The default vendor-blob build omits it,
+ * because the trust@0 -> 0x18000000 reservation matches the from-source TEE's
+ * M5-relocated TZDRAM, NOT the vendor blob (which lives at 0x1000).
+ *
+ * This mirrors the validated Lyra-Ultra OP-TEE DTS wiring (SoC-level, RK3506B)
+ * WITHOUT the Lyra UART1 console retarget — Core3506 keeps its UART0 ttyFIQ0
+ * console (see base .dtsi fiq_debugger + chosen/bootargs).
+ *
+ * !! NOT YET VALIDATED ON CORE3506 HARDWARE. These addresses are ported from
+ * the Lyra bring-up (identical RK3506B SoC) and need on-target confirmation.
+ *
+ * Memory map (no HW isolation): the from-source OP-TEE runs from the
+ * M5-relocated TZDRAM [0x18000000,0x1A000000) (32 MB: 2 MB TEE_RAM + ~30 MB
+ * TA pool). U-Boot patch 0003 puts the kernel at 0x08008000, so the kernel's
+ * detected ARM PHYS_OFFSET is 0x08000000 and the secure window sits ABOVE it
+ * — the no-map trust@0 reservation below is the sole protector of the secure
+ * RAM (the DDR firewall is non-enforcing in this config; HW isolation is the
+ * separate RK3506_TEE_HW_ISOLATE Phase-2 work).
+ */
+
+/ {
+	/*
+	 * Bind the Linux OP-TEE driver to our secure world. Standard
+	 * linaro,optee-tz / smc node; the driver negotiates static SHMEM
+	 * (optee_shm@10000000) over OPTEE_SMC. Without this node the driver
+	 * does not probe even with CONFIG_OPTEE=y -> no /dev/tee*.
+	 */
+	firmware {
+		optee: optee {
+			compatible = "linaro,optee-tz";
+			method = "smc";
+		};
+	};
+};
+
+/*
+ * OP-TEE secure window [0x18000000,0x1A000000). Must match the OP-TEE build's
+ * CFG_TZDRAM_START/SIZE and the U-Boot FIT optee load (OPTEE_TEE_LOAD =
+ * 0x18000000). no-map: Linux must not even map it. The base rk3506.dtsi sizes
+ * trust@0 for the tiny vendor TEE at 0x0; we relocate + grow it here.
+ */
+&{/reserved-memory/trust@0} {
+	reg = <0x18000000 0x02000000>;
+	no-map;
+};
+
+/*
+ * ramoops/pstore: relocate above PHYS_OFFSET. The stock low address would sit
+ * below the kernel's detected PHYS_OFFSET (0x08000000) and be silently
+ * dropped. 0x0c000000 is clear of the kernel image + self-relocation scratch
+ * and of fdt/ramdisk (0x0d/0x0e000000), and below SHMEM (0x10000000).
+ */
+&ramoops {
+	reg = <0x0c000000 0x0002d000>;
+};
+
+/*
+ * OP-TEE static SHMEM (conf.mk CFG_SHMEM_START/SIZE). Shared NS<->S region:
+ * reserve it from the page allocator (the optee kernel driver memremaps it
+ * itself, so no no-map).
+ */
+&reserved_memory {
+	optee_shm: optee-shm@10000000 {
+		reg = <0x10000000 0x00080000>;
+	};
+};

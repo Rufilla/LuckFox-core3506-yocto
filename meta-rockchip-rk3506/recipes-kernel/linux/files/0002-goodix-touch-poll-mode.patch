@@ -1,0 +1,144 @@
+From: Owen O'Hehir <40183643+OOHehir@users.noreply.github.com>
+Date: Sun, 25 May 2026 20:00:00 +0100
+Subject: [PATCH] Input: goodix - poll at 60fps when no touch IRQ is wired
+
+Backport the Luckfox Lyra SDK goodix poll fallback (rk/kernel @
+luckfox-linux-6.1-rk3506). The 10.1-DSI-TOUCH-A panel exposes no touch INT
+line on the Foxbridge carrier, so the stock mainline driver fails probe
+(request_threaded_irq with irq 0 -> -EINVAL) and the chip is never serviced.
+When client->irq is 0, drive the controller with a 17ms (60fps) i2c poll
+timer instead of an interrupt. Touch node then needs only compatible + reg.
+
+Upstream-Status: Inappropriate [vendor poll fallback for board with no touch IRQ]
+Signed-off-by: Owen O'Hehir <40183643+OOHehir@users.noreply.github.com>
+---
+--- a/drivers/input/touchscreen/goodix.h	2026-05-25 20:04:43.921139784 +0100
++++ b/drivers/input/touchscreen/goodix.h	2026-05-25 20:04:43.936445277 +0100
+@@ -7,6 +7,8 @@
+ #include <linux/input.h>
+ #include <linux/input/mt.h>
+ #include <linux/input/touchscreen.h>
++#include <linux/timer.h>
++#include <linux/workqueue.h>
+ #include <linux/regulator/consumer.h>
+ 
+ /* Register defines */
+@@ -104,6 +106,9 @@
+ 	u8 main_clk[GOODIX_MAIN_CLK_LEN];
+ 	int bak_ref_len;
+ 	u8 *bak_ref;
++	/* Poll-mode fallback when no touch IRQ is wired (Luckfox Lyra). */
++	struct timer_list timer;
++	struct work_struct work_i2c_poll;
+ };
+ 
+ int goodix_i2c_read(struct i2c_client *client, u16 reg, u8 *buf, int len);
+--- a/drivers/input/touchscreen/goodix.c	2026-05-25 20:04:43.919805011 +0100
++++ b/drivers/input/touchscreen/goodix.c	2026-05-25 20:04:43.936713059 +0100
+@@ -18,6 +18,8 @@
+ #include <linux/delay.h>
+ #include <linux/irq.h>
+ #include <linux/interrupt.h>
++#include <linux/timer.h>
++#include <linux/workqueue.h>
+ #include <linux/platform_data/x86/soc.h>
+ #include <linux/slab.h>
+ #include <linux/acpi.h>
+@@ -44,6 +46,8 @@
+ #define GOODIX_HAVE_KEY			BIT(4)
+ #define GOODIX_BUFFER_STATUS_TIMEOUT	20
+ 
++#define POLL_INTERVAL_MS		17	/* 17ms = 60fps */
++
+ #define RESOLUTION_LOC		1
+ #define MAX_CONTACTS_LOC	5
+ #define TRIGGER_LOC		6
+@@ -513,16 +517,66 @@
+ 	return IRQ_HANDLED;
+ }
+ 
++static void goodix_ts_irq_poll_timer(struct timer_list *t)
++{
++	struct goodix_ts_data *ts = from_timer(ts, t, timer);
++
++	schedule_work(&ts->work_i2c_poll);
++	mod_timer(&ts->timer, jiffies + msecs_to_jiffies(POLL_INTERVAL_MS));
++}
++
++static void goodix_ts_work_i2c_poll(struct work_struct *work)
++{
++	struct goodix_ts_data *ts = container_of(work,
++			struct goodix_ts_data, work_i2c_poll);
++
++	goodix_process_events(ts);
++	goodix_i2c_write_u8(ts->client, GOODIX_READ_COOR_ADDR, 0);
++}
++
++static void goodix_enable_irq(struct goodix_ts_data *ts)
++{
++	if (ts->client->irq) {
++		enable_irq(ts->client->irq);
++	} else {
++		ts->timer.expires = jiffies + msecs_to_jiffies(POLL_INTERVAL_MS);
++		add_timer(&ts->timer);
++	}
++}
++
++static void goodix_disable_irq(struct goodix_ts_data *ts)
++{
++	if (ts->client->irq) {
++		disable_irq(ts->client->irq);
++	} else {
++		del_timer(&ts->timer);
++		cancel_work_sync(&ts->work_i2c_poll);
++	}
++}
++
+ static void goodix_free_irq(struct goodix_ts_data *ts)
+ {
+-	devm_free_irq(&ts->client->dev, ts->client->irq, ts);
++	if (ts->client->irq) {
++		devm_free_irq(&ts->client->dev, ts->client->irq, ts);
++	} else {
++		del_timer(&ts->timer);
++		cancel_work_sync(&ts->work_i2c_poll);
++	}
+ }
+ 
+ static int goodix_request_irq(struct goodix_ts_data *ts)
+ {
+-	return devm_request_threaded_irq(&ts->client->dev, ts->client->irq,
+-					 NULL, goodix_ts_irq_handler,
+-					 ts->irq_flags, ts->client->name, ts);
++	if (ts->client->irq) {
++		return devm_request_threaded_irq(&ts->client->dev, ts->client->irq,
++						 NULL, goodix_ts_irq_handler,
++						 ts->irq_flags, ts->client->name, ts);
++	} else {
++		INIT_WORK(&ts->work_i2c_poll, goodix_ts_work_i2c_poll);
++		timer_setup(&ts->timer, goodix_ts_irq_poll_timer, 0);
++		if (ts->irq_pin_access_method == IRQ_PIN_ACCESS_NONE)
++			goodix_enable_irq(ts);
++		return 0;
++	}
+ }
+ 
+ static int goodix_check_cfg_8(struct goodix_ts_data *ts, const u8 *cfg, int len)
+@@ -1441,7 +1495,7 @@
+ 
+ 	/* We need gpio pins to suspend/resume */
+ 	if (ts->irq_pin_access_method == IRQ_PIN_ACCESS_NONE) {
+-		disable_irq(client->irq);
++		goodix_disable_irq(ts);
+ 		return 0;
+ 	}
+ 
+@@ -1485,7 +1539,7 @@
+ 	int error;
+ 
+ 	if (ts->irq_pin_access_method == IRQ_PIN_ACCESS_NONE) {
+-		enable_irq(client->irq);
++		goodix_enable_irq(ts);
+ 		return 0;
+ 	}
+ 

@@ -1,0 +1,54 @@
+{
+    "sources": {
+        "luckfox-yocto": {
+            "contains_this_file": true,
+            "git-remote": {
+                "branch": "master",
+                "describe": "",
+                "remotes": {},
+                "rev": "233e68bbf9aa2872dd53c92eff30ebe88788b0bf"
+            },
+            "path": "luckfox-yocto"
+        },
+        "poky": {
+            "git-remote": {
+                "branch": "scarthgap",
+                "describe": "",
+                "remotes": {
+                    "origin": {
+                        "uri": "https://git.yoctoproject.org/poky"
+                    }
+                },
+                "rev": "7d50718f90c51fb7f650c9db59b28c6e0194e5d2"
+            },
+            "path": "luckfox-yocto/sources/poky"
+        },
+        "meta-openembedded": {
+            "git-remote": {
+                "branch": "scarthgap",
+                "describe": "",
+                "remotes": {
+                    "origin": {
+                        "uri": "https://github.com/openembedded/meta-openembedded.git"
+                    }
+                },
+                "rev": "ae7dfb12245c7f9b9a353499e2688015bd4e6413"
+            },
+            "path": "luckfox-yocto/sources/meta-openembedded"
+        },
+        "meta-swupdate": {
+            "git-remote": {
+                "branch": "scarthgap",
+                "describe": "",
+                "remotes": {
+                    "origin": {
+                        "uri": "https://github.com/sbabic/meta-swupdate.git"
+                    }
+                },
+                "rev": "75385905a7deecaedb7be8b90141bc96df18b461"
+            },
+            "path": "luckfox-yocto/sources/meta-swupdate"
+        }
+    },
+    "version": "1.0"
+}

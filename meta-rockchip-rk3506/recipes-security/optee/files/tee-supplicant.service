@@ -1,0 +1,19 @@
+[Unit]
+Description=OP-TEE tee-supplicant (normal-world RPC daemon)
+# NOTE: do NOT gate on `dev-teepriv0.device`. systemd only synthesises
+# a .device unit for nodes udev tags into the systemd database; the
+# OP-TEE char devices get no such tag, so Requires=/After= that unit
+# leaves this service permanently `inactive` (the M5 2026-05-17
+# regression). The driver is built-in (CONFIG_OPTEE=y) and creates
+# /dev/teepriv0 in early boot, well before multi-user.target; a light
+# ConditionPathExists + Restart=always covers the race instead.
+ConditionPathExists=/dev/teepriv0
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/tee-supplicant
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

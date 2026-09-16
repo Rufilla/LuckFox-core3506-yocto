@@ -1,0 +1,33 @@
+# Rockchip RK3506 eMMC partition layout for wic
+#
+# Partition offsets verified against U-Boot CONFIG_SYS_MMCSD_RAW_MODE_U_BOOT_SECTOR
+# (0x4000 = sector 16384 = 8 MiB) and Rockchip BootROM conventions.
+#
+# Boot chain: BootROM loads idbloader.img from sector 64 (32 KiB offset).
+# idbloader initializes DDR and loads U-Boot from the uboot partition.
+# U-Boot loads the kernel from the boot partition.
+#
+# Layout (512-byte sectors):
+#   Sector 0x0000       : MBR / partition table
+#   Sector 0x0040 (32K) : idbloader.img (DDR init + SPL)
+#   Sector 0x4000 (8M)  : u-boot.img (U-Boot + OP-TEE FIT)
+#   Sector 0x8000 (16M) : boot partition (kernel + DTB)
+#   Sector 0xC000 (24M) : rootfs partition (fills remaining space)
+#
+# The IDBlock MUST be at sector 64 — this is hardcoded in the RK3506 BootROM.
+
+# idbloader.img: DDR init + SPL merged image
+# Written raw at sector 64 (32 KiB = 0x8000 bytes offset)
+part --source rawcopy --sourceparams="file=idbloader.img" --no-table --align 32
+
+# u-boot.img: U-Boot proper + OP-TEE as FIT image
+# Written raw at 8 MiB offset
+part --source rawcopy --sourceparams="file=u-boot.img" --no-table --align 8192
+
+# Boot partition: kernel zImage + DTB + extlinux/extlinux.conf
+# Starts at 16 MiB, 64 MiB size (generous for kernel + DTB + initramfs)
+bootloader --configfile=extlinux.conf
+part --source bootimg-partition --sourceparams="loader=u-boot" --fstype=vfat --label boot --align 16384 --size 64 --active
+
+# Root filesystem: ext4, fills remaining space
+part / --source rootfs --fstype=ext4 --label rootfs --align 24576

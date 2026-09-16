@@ -1,0 +1,17 @@
+# Udev rules shipped with foxbridge-mcp.
+#
+# Standard Raspberry-Pi-style hardware-access pattern: the kernel exposes the
+# devices as root-owned, and udev widens group ownership so a `gpio`/`leds`
+# group member can read/write them without elevated capabilities. Any process
+# NOT in those groups remains locked out (perms are 0660 / 0664, no world
+# access).
+
+# /dev/gpiochip0, /dev/gpiochip1, ... → root:gpio 0660
+KERNEL=="gpiochip[0-9]*", SUBSYSTEM=="gpio", GROUP="gpio", MODE="0660"
+
+# /sys/class/leds/<name>/brightness and trigger → root:leds 0664.
+# SUBSYSTEM==leds matches every led-class device; the RUN+= line runs on
+# every add/change event to chown the two control files. A DEVPATH check
+# scopes it to the class sysfs entry rather than other LED-flavoured nodes.
+ACTION=="add|change", SUBSYSTEM=="leds", \
+    RUN+="/bin/sh -c 'chgrp leds /sys%p/brightness /sys%p/trigger 2>/dev/null; chmod 0664 /sys%p/brightness /sys%p/trigger 2>/dev/null || true'"

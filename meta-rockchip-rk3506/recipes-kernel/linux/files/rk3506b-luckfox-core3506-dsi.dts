@@ -1,0 +1,458 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * LuckFox Core3506 SoM + foxbridge carrier with the Luckfox
+ * 10.1-DSI-TOUCH-A panel (800×1280 IPS, 10-point capacitive touch,
+ * I2C-controlled backlight via waveshare-backlight MCU at 0x45).
+ *
+ * This is the panel Luckfox tests their Lyra Pi against, and the SDK
+ * ships its panel-init-sequence as the active default in
+ * `arch/arm/boot/dts/rk3506-luckfox-lyra-ultra.dtsi` (the "10inch1"
+ * block at line ~200). We replicate that config here so the panel
+ * brings up via Luckfox's known-good sequence.
+ *
+ * Architecture:
+ *   - Panel: simple-panel-dsi with verbatim "10inch1" init bytes
+ *     (Ilitek ILI9881C DCS sequence, 2-lane DSI, RGB888, 70 MHz pixel clock)
+ *   - Touch: Goodix GT9271 (10-point capacitive) at I2C 0x5D
+ *   - Backlight: waveshare-backlight MCU at I2C 0x45 (driver backported
+ *     from the Lyra SDK — see 0001-add-waveshare-dsi-backlight-driver.patch)
+ *
+ * Pre-2026-05-09 history: this file previously targeted the Pi Touch
+ * Display 1 via the panel-raspberrypi-touchscreen driver. That panel
+ * has v2-firmware Atmel quirks the legacy driver doesn't handle, and
+ * the 22-to-15-pin Pi5-Display-Cable produced compromised DSI signal
+ * integrity. The Luckfox 10.1-DSI-TOUCH-A panel ships with native
+ * 22-pin FPC cables (no remap adapter needed) and uses the
+ * Luckfox-tested driver path, eliminating both classes of problem.
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/display/drm_mipi_dsi.h>
+#include "rk3506b-luckfox-core3506.dtsi"
+
+/ {
+	model = "LuckFox Core3506 + 10.1\" DSI Touch";
+	compatible = "luckfox,core3506-dsi", "luckfox,core3506", "rockchip,rk3506";
+
+	/*
+	 * Panel power rail. Foxbridge ties FPC VCC_3V3 directly to the
+	 * SoM 3v3 rail. Regulator-fixed exists purely as a phandle
+	 * target for `power-supply` properties on downstream nodes.
+	 */
+	vcc3v3_lcd: vcc3v3-lcd {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc3v3_lcd";
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+	};
+};
+
+&pinctrl {
+	/*
+	 * I2C2 pin overrides (pull-up vs the rmio default of pull-none).
+	 * Matches Luckfox Lyra Ultra dtsi.
+	 */
+	rm_io0 {
+		rm_io0_i2c2_sda: rm-io0-i2c2-sda {
+			rockchip,pins = <0 RK_PA0 35 &pcfg_pull_up>;
+		};
+	};
+
+	rm_io1 {
+		rm_io1_i2c2_scl: rm-io1-i2c2-scl {
+			rockchip,pins = <0 RK_PA1 34 &pcfg_pull_up>;
+		};
+	};
+};
+
+/*
+ * CMA pool for DRM framebuffer allocations. rk3502.dtsi declares the
+ * `cma` node with size=0; without an override, drm_gem_cma_create()
+ * returns -ENOMEM on the first modeset. 32 MB matches Rockchip's
+ * rk3506g-demo-display-control.dts and gives headroom for VOP overlay
+ * planes plus future camera/video buffers.
+ */
+&cma {
+	size = <0x2000000>;
+};
+
+/*
+ * Display pipeline: VOP -> DSI host -> DSI D-PHY -> ILI9881C panel.
+ * All disabled in rk3506.dtsi by default; flip them on here. The
+ * display_subsystem master node is required for the rockchip-drm
+ * component aggregator to bind and create /dev/dri/card0.
+ */
+&display_subsystem {
+	status = "okay";
+};
+
+&route_dsi {
+	status = "okay";
+	connect = <&vop_out_dsi>;
+};
+
+&vop {
+	status = "okay";
+};
+
+&vop_out_dsi {
+	status = "okay";
+};
+
+&dsi_in_vop {
+	status = "okay";
+};
+
+&dsi_dphy {
+	status = "okay";
+};
+
+&dsi {
+	status = "okay";
+
+	dsi_panel: panel@0 {
+		status = "okay";
+		compatible = "simple-panel-dsi";
+		reg = <0>;
+		bpc = <8>;
+		power-supply = <&vcc3v3_lcd>;
+
+		prepare-delay-ms = <120>;
+		reset-delay-ms = <120>;
+		init-delay-ms = <120>;
+		disable-delay-ms = <120>;
+		unprepare-delay-ms = <120>;
+
+		dsi,flags = <(MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_BURST |
+			      MIPI_DSI_MODE_LPM | MIPI_DSI_MODE_NO_EOT_PACKET)>;
+		dsi,format = <MIPI_DSI_FMT_RGB888>;
+		dsi,lanes = <2>;
+
+		/* 10.1-DSI-TOUCH-A physical dimensions (10.1" 16:10). */
+		width-mm = <216>;
+		height-mm = <135>;
+
+		/*
+		 * Panel is mounted in landscape but is natively portrait
+		 * (800x1280). rotation=270 = 90° CCW. DRM reads this via
+		 * of_drm_get_panel_orientation: KMS clients honour it, and the
+		 * DRM fbdev-emulation rotates /dev/fb0 to match (so psplash /
+		 * fbcon come up landscape too). Flip to 90 if the image is CCW
+		 * the wrong way.
+		 */
+		rotation = <270>;
+
+		/*
+		 * Verbatim "10inch1" init from Luckfox SDK
+		 * `rk3506-luckfox-lyra-ultra.dtsi` line ~205. Ilitek ILI9881C
+		 * panel controller — the manufacturer command set (CMD2 BK0/1/2)
+		 * is selected by the `15 00 02 E0 NN` writes; subsequent
+		 * register writes target each bank.
+		 */
+		panel-init-sequence = [
+			15 00 02 E0 00
+			15 00 02 E1 93
+			15 00 02 E2 65
+			15 00 02 E3 F8
+			15 00 02 80 01
+			15 00 02 E0 01
+			15 00 02 00 00
+			15 00 02 01 38
+			15 00 02 03 10
+			15 00 02 04 38
+			15 00 02 0C 74
+			15 00 02 17 00
+			15 00 02 18 AF
+			15 00 02 19 00
+			15 00 02 1A 00
+			15 00 02 1B AF
+			15 00 02 1C 00
+			15 00 02 35 26
+			15 00 02 37 09
+			15 00 02 38 04
+			15 00 02 39 00
+			15 00 02 3A 01
+			15 00 02 3C 78
+			15 00 02 3D FF
+			15 00 02 3E FF
+			15 00 02 3F 7F
+			15 00 02 40 06
+			15 00 02 41 A0
+			15 00 02 42 81
+			15 00 02 43 1E
+			15 00 02 44 0D
+			15 00 02 45 28
+			15 00 02 55 02
+			15 00 02 57 69
+			15 00 02 59 0A
+			15 00 02 5A 2A
+			15 00 02 5B 17
+			15 00 02 5D 7F
+			15 00 02 5E 6A
+			15 00 02 5F 5B
+			15 00 02 60 4F
+			15 00 02 61 4A
+			15 00 02 62 3D
+			15 00 02 63 41
+			15 00 02 64 2A
+			15 00 02 65 44
+			15 00 02 66 43
+			15 00 02 67 44
+			15 00 02 68 62
+			15 00 02 69 52
+			15 00 02 6A 59
+			15 00 02 6B 4C
+			15 00 02 6C 48
+			15 00 02 6D 3A
+			15 00 02 6E 26
+			15 00 02 6F 00
+			15 00 02 70 7F
+			15 00 02 71 6A
+			15 00 02 72 5B
+			15 00 02 73 4F
+			15 00 02 74 4A
+			15 00 02 75 3D
+			15 00 02 76 41
+			15 00 02 77 2A
+			15 00 02 78 44
+			15 00 02 79 43
+			15 00 02 7A 44
+			15 00 02 7B 62
+			15 00 02 7C 52
+			15 00 02 7D 59
+			15 00 02 7E 4C
+			15 00 02 7F 48
+			15 00 02 80 3A
+			15 00 02 81 26
+			15 00 02 82 00
+			15 00 02 E0 02
+			15 00 02 00 42
+			15 00 02 01 42
+			15 00 02 02 40
+			15 00 02 03 40
+			15 00 02 04 5E
+			15 00 02 05 5E
+			15 00 02 06 5F
+			15 00 02 07 5F
+			15 00 02 08 5F
+			15 00 02 09 57
+			15 00 02 0A 57
+			15 00 02 0B 77
+			15 00 02 0C 77
+			15 00 02 0D 47
+			15 00 02 0E 47
+			15 00 02 0F 45
+			15 00 02 10 45
+			15 00 02 11 4B
+			15 00 02 12 4B
+			15 00 02 13 49
+			15 00 02 14 49
+			15 00 02 15 5F
+			15 00 02 16 41
+			15 00 02 17 41
+			15 00 02 18 40
+			15 00 02 19 40
+			15 00 02 1A 5E
+			15 00 02 1B 5E
+			15 00 02 1C 5F
+			15 00 02 1D 5F
+			15 00 02 1E 5F
+			15 00 02 1F 57
+			15 00 02 20 57
+			15 00 02 21 77
+			15 00 02 22 77
+			15 00 02 23 46
+			15 00 02 24 46
+			15 00 02 25 44
+			15 00 02 26 44
+			15 00 02 27 4A
+			15 00 02 28 4A
+			15 00 02 29 48
+			15 00 02 2A 48
+			15 00 02 2B 5F
+			15 00 02 2C 01
+			15 00 02 2D 01
+			15 00 02 2E 00
+			15 00 02 2F 00
+			15 00 02 30 1F
+			15 00 02 31 1F
+			15 00 02 32 1E
+			15 00 02 33 1E
+			15 00 02 34 1F
+			15 00 02 35 17
+			15 00 02 36 17
+			15 00 02 37 37
+			15 00 02 38 37
+			15 00 02 39 08
+			15 00 02 3A 08
+			15 00 02 3B 0A
+			15 00 02 3C 0A
+			15 00 02 3D 04
+			15 00 02 3E 04
+			15 00 02 3F 06
+			15 00 02 40 06
+			15 00 02 41 1F
+			15 00 02 42 02
+			15 00 02 43 02
+			15 00 02 44 00
+			15 00 02 45 00
+			15 00 02 46 1F
+			15 00 02 47 1F
+			15 00 02 48 1E
+			15 00 02 49 1E
+			15 00 02 4A 1F
+			15 00 02 4B 17
+			15 00 02 4C 17
+			15 00 02 4D 37
+			15 00 02 4E 37
+			15 00 02 4F 09
+			15 00 02 50 09
+			15 00 02 51 0B
+			15 00 02 52 0B
+			15 00 02 53 05
+			15 00 02 54 05
+			15 00 02 55 07
+			15 00 02 56 07
+			15 00 02 57 1F
+			15 00 02 58 40
+			15 00 02 5B 30
+			15 00 02 5C 00
+			15 00 02 5D 34
+			15 00 02 5E 05
+			15 00 02 5F 02
+			15 00 02 63 00
+			15 00 02 64 6A
+			15 00 02 67 73
+			15 00 02 68 07
+			15 00 02 69 08
+			15 00 02 6A 6A
+			15 00 02 6B 08
+			15 00 02 6C 00
+			15 00 02 6D 00
+			15 00 02 6E 00
+			15 00 02 6F 88
+			15 00 02 75 FF
+			15 00 02 77 DD
+			15 00 02 78 2C
+			15 00 02 79 15
+			15 00 02 7A 17
+			15 00 02 7D 14
+			15 00 02 7E 82
+			15 00 02 E0 04
+			15 00 02 00 0E
+			15 00 02 02 B3
+			15 00 02 09 61
+			15 00 02 0E 48
+			15 00 02 E0 00
+			15 00 02 E6 02
+			15 00 02 E7 0C
+			05 78 01 11
+			05 00 01 E0
+			05 05 01 29
+		];
+
+		disp_timings0: display-timings {
+			native-mode = <&dsi_timing0>;
+
+			/* "10inch1" timing — Luckfox SDK ws_10inch_1 / dsi_timing0 */
+			dsi_timing0: timing0 {
+				clock-frequency = <70000000>; /* 60 fps */
+				hactive = <800>;
+				vactive = <1280>;
+
+				vsync-len = <4>;
+				vback-porch = <10>;
+				vfront-porch = <30>;
+
+				hsync-len = <20>;
+				hback-porch = <20>;
+				hfront-porch = <40>;
+
+				vsync-active = <0>;
+				hsync-active = <0>;
+				de-active = <0>;
+				pixelclk-active = <0>;
+			};
+		};
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				reg = <0>;
+				panel_in_dsi: endpoint {
+					remote-endpoint = <&dsi_out_panel>;
+				};
+			};
+		};
+	};
+
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		port@1 {
+			reg = <1>;
+			dsi_out_panel: endpoint {
+				remote-endpoint = <&panel_in_dsi>;
+			};
+		};
+	};
+};
+
+/*
+ * Touch I2C bus.
+ *   gt9271@0x5d   — 10-point Goodix capacitive touch (matches the panel)
+ *   waveshare_backlight@0x45 — backlight MCU. The driver registers a
+ *                              backlight class device; userspace can
+ *                              control brightness via /sys/class/backlight/.
+ */
+&i2c2 {
+	clock-frequency = <400000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&rm_io1_i2c2_scl &rm_io0_i2c2_sda>;
+	status = "okay";
+
+	/*
+	 * TODO (touch deferred 2026-05-25): GT9271 capacitive touch.
+	 * The chip answers on I2C2 at 0x5d (ID 9271), but the panel's
+	 * published 22-pin interface exposes only MIPI DSI + I2C — it does
+	 * NOT bring out the GT9271 INT line (FPC pins 5/6 are "reserved";
+	 * there is no interrupt pin). So there's no INT for any carrier to
+	 * route: this panel is designed for I2C-polled touch. Confirmed on HW
+	 * that Foxbridge's two spare lines to the reserved pins (GPIO0_C0 /
+	 * GPIO1_C5) carry no touch activity — with mainline goodix bound to
+	 * C0 the IRQ never fired, and C5 never toggled on touch. The mainline
+	 * goodix driver requires an interrupt, so it cannot drive this panel.
+	 * Plan: poll the GT9271 over I2C via a userspace I2C->uinput daemon,
+	 * or a gt9xx-driver poll-mode patch. Until then the node is disabled
+	 * so nothing claims 0x5d (a poll daemon opens /dev/i2c-2 directly).
+	 * See doom.md task list + [[project_dsi_screen_status]].
+	 */
+	/*
+	 * GT9271 10-point capacitive touch. The 10.1-DSI-TOUCH-A exposes no
+	 * touch INT line on this carrier, so there are NO interrupt/reset GPIOs
+	 * — the goodix driver runs in 60fps I2C poll mode (see
+	 * 0002-goodix-touch-poll-mode.patch, backported from the Luckfox Lyra
+	 * SDK). This minimal node (compatible + reg only) matches the Lyra's
+	 * working gt9271 node verbatim.
+	 */
+	gt9271: touchscreen@5d {
+		status = "okay";
+		compatible = "goodix,gt9271";
+		reg = <0x5d>;
+	};
+
+	waveshare_backlight: backlight@45 {
+		status = "okay";
+		compatible = "waveshare,dsi-backlight";
+		reg = <0x45>;
+		default-brightness-level = <200>;
+		max-brightness-level = <255>;
+		min-brightness-level = <5>;
+	};
+};

@@ -1,0 +1,30 @@
+# Rockchip RK3506 SD card partition layout for wic
+#
+# Identical sector offsets to eMMC — the RK3506 BootROM uses the same
+# layout for both boot media. The rootfs partition grows to fill the
+# SD card (typically larger than on-board eMMC).
+#
+# Flash with: dd if=<image>.wic of=/dev/sdX bs=4M status=progress
+# Or use bmaptool for faster writes with verification.
+#
+# Layout (512-byte sectors):
+#   Sector 0x0000       : MBR / partition table
+#   Sector 0x0040 (32K) : idbloader.img (DDR init + SPL)
+#   Sector 0x4000 (8M)  : u-boot.img (U-Boot + OP-TEE FIT)
+#   Sector 0x8000 (16M) : boot partition (kernel + DTB)
+#   Sector 0xC000 (24M) : rootfs partition (fills remaining space)
+#
+# The IDBlock MUST be at sector 64 — this is hardcoded in the RK3506 BootROM.
+
+# idbloader.img: DDR init + SPL merged image
+part --source rawcopy --sourceparams="file=idbloader.img" --no-table --align 32
+
+# u-boot.img: U-Boot proper + OP-TEE as FIT image
+part --source rawcopy --sourceparams="file=u-boot.img" --no-table --align 8192
+
+# Boot partition: kernel zImage + DTB + extlinux/extlinux.conf
+bootloader --configfile=extlinux.conf
+part --source bootimg-partition --sourceparams="loader=u-boot" --fstype=vfat --label boot --align 16384 --size 64 --active
+
+# Root filesystem: ext4, fills remaining SD card space
+part / --source rootfs --fstype=ext4 --label rootfs --align 24576

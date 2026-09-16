@@ -1,0 +1,72 @@
+From: Owen O'Hehir <40183643+OOHehir@users.noreply.github.com>
+Date: Sun, 25 May 2026 18:00:00 +0100
+Subject: [PATCH] linuxvt: rotate 90 CCW + 2x scale, guard missing /dev/input
+
+Render the 640x400 Doom frame rotated 90 CCW and 2x-scaled so it fills the
+portrait 800x1280 DSI panel as a 1280x800 landscape image. Also guard
+checkInputDevs() against /dev/input being absent and treat "no keyboard" as
+non-fatal, so Doom still runs (attract demo) on a headless/touch-only panel.
+
+Upstream-Status: Inappropriate [board-specific framebuffer backend]
+Signed-off-by: Owen O'Hehir <40183643+OOHehir@users.noreply.github.com>
+---
+diff --git a/doomgeneric/doomgeneric_linuxvt.c b/doomgeneric/doomgeneric_linuxvt.c
+index ed94dd9..4e365cd 100644
+--- a/doomgeneric/doomgeneric_linuxvt.c
++++ b/doomgeneric/doomgeneric_linuxvt.c
+@@ -368,6 +368,10 @@ static void checkInputDevs() {
+ 
+ 	/* check for devices */
+ 	dir = opendir("/dev/input");
++	if (!dir) {
++		printf("WARNING: /dev/input not present; no input devices\n");
++		return;
++	}
+ 
+ 	while ((dp = readdir(dir)) != NULL) {
+ 		char fullpath[268]; /* d_name is 256 bytes */
+@@ -454,22 +458,34 @@ void DG_Init() {
+ 	checkInputDevs();
+ 	
+ 	if (numInputFds == 0)
+-		I_Error("Failed to find any compatible input device, see the logs above for potential problems");
++		printf("WARNING: no keyboard found; running without key input\n");
+ 
+ 	// get the start time
+ 	gettimeofday(&startTime, NULL);
+ }
+ 
+ void DG_DrawFrame() {
+-	// we need to do it line-by-line like this to account for the
+-	// fact that the system framebuffer resolution is very likely
+-	// larger than the doomgeneric render resolution.
+-	for (int line = 0; line < DOOMGENERIC_RESY; line++) {
+-		memcpy(
+-			(void *)((uintptr_t)(fbPtr) + (fbStride * line) + fbOffsetY + fbOffsetX),
+-				(void *)(((uintptr_t)DG_ScreenBuffer) + (DOOMGENERIC_RESX * line * fbBytesPerPixel)),
+-			 (fbBytesPerPixel * DOOMGENERIC_RESX)
+-		);
++	// The 10.1-DSI-TOUCH-A is a portrait 800x1280 panel mounted in
++	// landscape. Rotate the 640x400 Doom frame 90 CCW and x2-scale it so
++	// it fills the whole panel as a 1280x800 landscape image. fb is 32bpp
++	// XRGB8888, same as DG_ScreenBuffer, so this is a direct u32 copy.
++	// (Flip FBDEV_ROT_CW / the axis inversions below if it comes out
++	// mirrored or upside-down on hardware.)
++	uint32_t *fb  = (uint32_t *)fbPtr;
++	uint32_t *src = (uint32_t *)DG_ScreenBuffer;
++	unsigned int strpx = fbStride / 4;            /* pixels per fb row (800) */
++
++	for (unsigned int y = 0; y < fbHeight; y++) {     /* 0..1279 */
++		unsigned int sx = y >> 1;                 /* doom X, 0..639 */
++		if (sx >= DOOMGENERIC_RESX)
++			continue;
++		uint32_t *fbrow = fb + (size_t)y * strpx;
++		for (unsigned int x = 0; x < fbWidth; x++) {   /* 0..799 */
++			unsigned int sy = (fbWidth - 1 - x) >> 1;  /* doom Y, 0..399 */
++			if (sy >= DOOMGENERIC_RESY)
++				continue;
++			fbrow[x] = src[(size_t)sy * DOOMGENERIC_RESX + sx];
++		}
+ 	}
+ 
+ 	checkKeys();

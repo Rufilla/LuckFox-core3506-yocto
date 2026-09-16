@@ -1,0 +1,147 @@
+# PicoClaw on foxbridge
+
+PicoClaw is a lightweight AI agent that you talk to over Telegram. It relays
+your messages to an LLM provider (Claude, OpenAI, Gemini, etc.) and can
+optionally call back into a small set of safe tools (web search, web fetch,
+cron scheduling, read-only file access).
+
+This install runs upstream binary v0.2.6 as a systemd service
+(`picoclaw.service`), pinned to armv7.
+
+## Upstream warning
+
+Sipeed's README says: "PicoClaw is in early rapid development. There may be
+unresolved security issues. Do not deploy to production before v1.0."
+Current release is 0.2.6. Treat this as a beta feature on the foxbridge.
+
+## First-time setup
+
+1.  In Telegram, talk to `@BotFather` → `/newbot` → pick a name → save the
+    token it returns.
+2.  Talk to `@userinfobot` → note your numeric user ID.
+3.  Edit `/etc/default/picoclaw` (as root):
+    - Replace `CHANGEME_TELEGRAM_BOT_TOKEN` with the BotFather token.
+    - Replace `CHANGEME_ANTHROPIC_API_KEY` with your Anthropic API key.
+4.  Edit `/etc/picoclaw/config.json.tmpl`:
+    - Under `channels.telegram.allow_from`, change `[]` to `[123456789]`
+      (your numeric user ID). Add more IDs if other people should be
+      allowed.
+5.  `systemctl restart picoclaw`
+6.  `journalctl -u picoclaw -f` to watch it come up.
+7.  Message your bot in Telegram. First reply takes 2–5 seconds.
+
+## Enable / disable the service
+
+-   Start now:     `systemctl start picoclaw`
+-   Stop now:      `systemctl stop picoclaw`
+-   Enable on boot:  `systemctl enable picoclaw`   (default — already on)
+-   Disable on boot: `systemctl disable picoclaw`
+-   Fully remove:  remove `picoclaw` from `IMAGE_INSTALL` in
+    `meta-luckfox-distro/recipes-core/images/luckfox-image-minimal.inc`
+    and rebuild — or just `systemctl disable --now picoclaw`.
+
+The service refuses to start while any `CHANGEME_` markers remain, so a
+freshly-flashed image boots cleanly without spurious failures. Check status
+with `systemctl status picoclaw`.
+
+## Switching LLM providers
+
+PicoClaw's `model_list` in `/etc/picoclaw/config.json.tmpl` defaults to
+Anthropic Claude. To switch, replace that entry with one of the snippets
+below, and set the matching `${...}_API_KEY` in `/etc/default/picoclaw`.
+
+### OpenAI
+
+```json
+"model_list": [
+  { "model_name": "gpt", "model": "openai/gpt-4o-mini",
+    "api_keys": ["${OPENAI_API_KEY}"] }
+]
+```
+Then set `agents.defaults.model_name` to `"gpt"` and uncomment
+`OPENAI_API_KEY=` in `/etc/default/picoclaw`.
+
+Note: the `<vendor>/<model>` prefix is mandatory. Without it picoclaw
+falls back to the OpenAI protocol and will send whatever key you
+configured to `api.openai.com`, regardless of the actual provider —
+which produces a misleading "Incorrect API key" error.
+
+### Google Gemini
+
+```json
+{ "model_name": "gemini", "model": "gemini/gemini-1.5-flash",
+  "api_keys": ["${GOOGLE_API_KEY}"] }
+```
+
+### DeepSeek
+
+```json
+{ "model_name": "deepseek", "model": "deepseek/deepseek-chat",
+  "api_keys": ["${DEEPSEEK_API_KEY}"] }
+```
+
+### Groq
+
+```json
+{ "model_name": "groq", "model": "groq/llama-3.3-70b-versatile",
+  "api_keys": ["${GROQ_API_KEY}"] }
+```
+
+### Ollama (local, off-device)
+
+Point picoclaw at an Ollama server running on another machine on your LAN:
+
+```json
+{ "model_name": "local", "model": "ollama/llama3.2",
+  "api_base": "http://192.168.1.10:11434/v1", "api_keys": [""] }
+```
+
+Don't try to run Ollama on the foxbridge itself — 512 MB DDR3L cannot
+hold a useful local model.
+
+## Tool permissions (read-only-ish default)
+
+By default, the following tools are **disabled** because they're dangerous
+when the agent is driven by a Telegram chat that could be compromised:
+
+-   `exec`          — shell command execution
+-   `write_file`, `append_file`, `edit_file`  — filesystem writes
+-   `spawn`, `subagent`  — spawning sub-processes / sub-agents
+-   `install_skill` — installing third-party skills (arbitrary code)
+-   `i2c`, `spi`    — direct hardware bus access
+-   `mcp`           — Model Context Protocol servers
+
+To enable any of them, set `"enabled": true` in the matching block in
+`/etc/picoclaw/config.json.tmpl` and `systemctl restart picoclaw`.
+**Only do this if you understand the risk** — an attacker with the bot
+token or a compromised allowed user could use these tools to trash the box.
+
+Enabled by default (safe-ish):
+
+-   `web` + `web_fetch` — HTTP fetch for the agent to read the open web
+-   `read_file`, `list_dir`  — read-only filesystem (`mode: safe`)
+-   `cron`          — schedule prompts
+-   `message`, `find_skills`, `skills` — agent messaging / skill discovery
+
+## Where things live
+
+| Path | Purpose | Persisted? |
+|------|---------|------------|
+| `/usr/bin/picoclaw` | Main binary (28 MB) | image |
+| `/usr/bin/picoclaw-launcher[-tui]` | Interactive setup / TUI helpers | image |
+| `/usr/libexec/picoclaw-start` | CHANGEME guard + env substitution | image |
+| `/etc/picoclaw/config.json.tmpl` | Config template (no secrets) | eMMC |
+| `/etc/picoclaw/README.md` | This file | eMMC |
+| `/etc/default/picoclaw` | Secrets (mode 0640 root:picoclaw) | eMMC |
+| `/var/lib/picoclaw/workspace/` | Agent state, memory, sessions | eMMC |
+| `/run/picoclaw/config.json` | Rendered config with real secrets | tmpfs — wiped on reboot |
+
+## Troubleshooting
+
+-   `systemctl status picoclaw` — shows the CHANGEME guard message if
+    placeholders remain.
+-   `journalctl -u picoclaw -n 100` — picoclaw's own logs.
+-   `curl -s https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getMe` on the
+    box confirms the token is valid and outbound network works.
+-   Empty `allow_from` is a hard block — the guard refuses to start. This
+    is intentional; a bot open to the world is dangerous.

@@ -1,0 +1,31 @@
+#!/bin/sh
+# ota-env-init — seed the persistent U-Boot env on first boot (OTA M1).
+# See OTA_SWUPDATE_PLAN.md.
+#
+# A freshly-flashed unit has a blank eMMC env region (the .wic write zeroes the
+# 12 MiB env gap), so U-Boot autoboots off its compiled-in default the first time.
+# This oneshot seeds the persistent env once: U-Boot's full default env (-f) plus
+# the A/B OTA overrides (-s): the boot.scr-selector bootcmd, BOOT_ORDER and the
+# per-slot try-counters. After this, U-Boot runs the A/B selector on every boot.
+#
+# Idempotent: if BOOT_ORDER is already set, the env was seeded — do nothing.
+set -e
+
+# Guard on the A/B selector being present in bootcmd, NOT on BOOT_ORDER: the eMMC
+# env region survives a wic reflash (rkdeveloptool doesn't zero the 8-16 MiB
+# loader gap), so a stale BOOT_ORDER from a previous image must not block
+# seeding. Re-seed whenever bootcmd isn't yet the ab_select selector; once it is,
+# leave the env alone so ab_select + ota-mark-good own the counters/order.
+case "$(fw_printenv -n bootcmd 2>/dev/null || true)" in
+    *ab_select*)
+        echo "ota-env-init: A/B selector (ab_select) already in bootcmd — nothing to do"
+        exit 0
+        ;;
+esac
+
+echo "ota-env-init: seeding U-Boot env (default + A/B overrides)"
+# -f supplies the default env when none is found (blank region); -s layers the
+# A/B overrides (bootcmd, BOOT_ORDER, BOOT_x_LEFT) on top.
+fw_setenv -f /etc/u-boot-initial-env -s /etc/ota-bootenv
+
+echo "ota-env-init: seeded — BOOT_ORDER=$(fw_printenv -n BOOT_ORDER 2>/dev/null) bootcmd=$(fw_printenv -n bootcmd 2>/dev/null | head -c 40)..."

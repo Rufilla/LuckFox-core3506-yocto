@@ -1,0 +1,45 @@
+[Unit]
+Description=Foxbridge MCP hardware-access server
+Documentation=https://github.com/Rufilla/LuckFox-core3506-yocto
+After=systemd-udev-settle.service
+Wants=systemd-udev-settle.service
+
+[Service]
+Type=simple
+User=fb-mcp
+Group=fb-mcp
+SupplementaryGroups=gpio leds
+
+ExecStart=/usr/bin/foxbridge-mcp --addr=127.0.0.1:45521
+Restart=on-failure
+RestartSec=5s
+
+# Hardening. This service has *hardware access* so ProtectKernelTunables=yes
+# is possible here (we don't touch /proc/sys) — the whole point of running as
+# a non-root user with gpio/leds groups is that the kernel enforces the
+# access boundary via file perms, not via capability juggling.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+
+# Bind only to loopback; picoclaw runs on the same host.
+IPAddressDeny=any
+IPAddressAllow=127.0.0.0/8
+
+# /sys is normally mounted read-only for the service; we need write for
+# /sys/class/leds/*/brightness (guarded by the `leds` group via udev rules).
+ReadWritePaths=/sys/class/leds
+
+[Install]
+WantedBy=multi-user.target
