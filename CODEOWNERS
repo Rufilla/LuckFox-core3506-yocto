@@ -1,17 +1,9 @@
-# Code owners are requested for review automatically.
+# Code owners are requested for review automatically on pull requests.
 # Syntax: <pattern> <owners...>. The LAST matching pattern wins.
 #
-# Replace @Rufilla/embedded with the real GitHub team or user handles before
-# relying on this — an unresolvable owner silently disables review requests.
+# An owner must have write access to this repository, or GitHub silently
+# ignores the rule and requests no review at all. This file also has no
+# effect unless branch protection on `main` enables "Require review from
+# Code Owners".
 
-*                                   @Rufilla/embedded
-
-/meta-rockchip-rk3506/              @Rufilla/embedded
-/meta-luckfox-bsp/                  @Rufilla/embedded
-/meta-luckfox-distro/               @Rufilla/embedded
-
-# Security-sensitive: boot chain, signing, verity, OTA.
-/meta-rockchip-rk3506/recipes-security/   @Rufilla/embedded
-/meta-luckfox-bsp/classes/dm-verity-img.bbclass  @Rufilla/embedded
-/meta-luckfox-distro/recipes-support/swupdate/   @Rufilla/embedded
-
+*   @OOHehir
